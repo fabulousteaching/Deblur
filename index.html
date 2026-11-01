@@ -191,7 +191,7 @@ details.help a{color:#9cc8ff}
         <label class="chk" for="ki"><input type="checkbox" id="ki"><span>KI-Details <span class="tag">experimentell</span></span></label>
         <div class="hint">Ein neuronales Netz ergänzt Feinheiten, die in der Unschärfe verloren gingen (z. B. Augen, Brauen, Lippen). Wirkt deutlich schärfer – diese Details sind aber erfunden, Gesichter können sich leicht verändern.</div>
         <label for="kiAmt" class="kiamt">KI-Anteil <output id="kiOut"></output></label>
-        <input type="range" id="kiAmt" min="10" max="100" value="60" disabled>
+        <input type="range" id="kiAmt" min="10" max="100" value="70" disabled>
       </div>
     </section>
 
@@ -973,7 +973,7 @@ function stopWork(){
 // Das Netz arbeitet auf einer verkleinerten Kopie der unscharfen Stelle (Faktor ds = 2 oder 4)
 // und vergrössert sie viermal; dabei ergänzt es Feinheiten. Gerechnet wird auf der Grafikkarte
 // (WebGL2), sonst – langsamer – in den Hintergrund-Threads.
-const KI = { layers: null, cpu: null, gpu: undefined, PAD: 12, TILE: 256, MIN_DETAIL: 2.5 };
+const KI = { layers: null, cpu: null, gpu: undefined, PAD: 12, TILE: 256, MIN_DETAIL: 2.8 };
 
 function kiLoad(){
   if (KI.layers) return;
@@ -1138,17 +1138,19 @@ function planKITiles(a, s, enable){
         }
       }
       if (wmax < 0.05) continue;
+      // Verkleinerung so wählen, dass die Kopie nur noch leicht unscharf ist (Restunschärfe ≈ 0.8 Pixel)
+      const sig = ss / sw, ds = Math.max(2, Math.min(8, Math.round(sig * s.psf / 0.8)));
+      // Struktur im Abstand ds messen: so ist die Schwelle unabhängig von der Auflösung des Fotos
       let gs = 0, gn = 0;
-      for (let y = Math.max(1, y0); y < Math.min(H - 1, y0 + th); y += 2){
-        for (let x = Math.max(1, x0); x < Math.min(W - 1, x0 + tw); x += 2){
+      for (let y = Math.max(ds, y0); y < Math.min(H - ds, y0 + th); y += ds){
+        for (let x = Math.max(ds, x0); x < Math.min(W - ds, x0 + tw); x += ds){
           const q = (y * W + x) * 4;
-          gs += Math.abs(lum(q + 4) - lum(q - 4)) + Math.abs(lum(q + 4 * W) - lum(q - 4 * W)); gn++;
+          gs += Math.abs(lum(q + 4 * ds) - lum(q - 4 * ds)) + Math.abs(lum(q + 4 * ds * W) - lum(q - 4 * ds * W)); gn++;
         }
       }
       const detail = gs / Math.max(1, gn);
       if (detail < KI.MIN_DETAIL) continue;         // glatte Flächen (Wand, Himmel) auslassen
-      const sig = ss / sw;
-      tiles.push({ x0, y0, tw, th, ds: sig < 3.2 ? 2 : 4, sig, detail });
+      tiles.push({ x0, y0, tw, th, ds, sig, detail });
     }
   }
   return tiles;
@@ -1175,17 +1177,37 @@ function kiExtract(t){
 }
 // KI-Ergebnis (Massstab 4/ds) zurück auf Originalgrösse bringen und einmischen
 function kiApply(t, e, up, a, s, enable){
-  const f = 4 / t.ds, UW = e.lw * 4, o = state.outData.data, W = state.src.w, k = 255 / (f * f);
+  const f = 4 / t.ds, UW = e.lw * 4, UH = e.lh * 4, o = state.outData.data, W = state.src.w;
+  const c = [0, 0, 0];
+  // KI-Farbe für Originalpixel (X, Y), Werte 0…255: Mittel über die Fläche des Pixels in der KI-Ausgabe
+  const n = Math.max(1, Math.ceil(f)), k = 255 / (n * n);
+  const sample = (X, Y) => {
+    let r = 0, g = 0, b = 0;
+    for (let j = 0; j < n; j++){
+      let uy = (Y - e.ry0 + (j + 0.5) / n) * f - 0.5;
+      uy = uy < 0 ? 0 : (uy > UH - 1 ? UH - 1 : uy);
+      const y0 = uy | 0, y1 = y0 + 1 < UH ? y0 + 1 : y0, fy = uy - y0;
+      for (let i = 0; i < n; i++){
+        let ux = (X - e.rx0 + (i + 0.5) / n) * f - 0.5;
+        ux = ux < 0 ? 0 : (ux > UW - 1 ? UW - 1 : ux);
+        const x0 = ux | 0, x1 = x0 + 1 < UW ? x0 + 1 : x0, fx = ux - x0;
+        const q00 = (y0 * UW + x0) * 3, q01 = (y0 * UW + x1) * 3, q10 = (y1 * UW + x0) * 3, q11 = (y1 * UW + x1) * 3;
+        const w00 = (1 - fx) * (1 - fy), w01 = fx * (1 - fy), w10 = (1 - fx) * fy, w11 = fx * fy;
+        r += up[q00] * w00 + up[q01] * w01 + up[q10] * w10 + up[q11] * w11;
+        g += up[q00 + 1] * w00 + up[q01 + 1] * w01 + up[q10 + 1] * w10 + up[q11 + 1] * w11;
+        b += up[q00 + 2] * w00 + up[q01 + 2] * w01 + up[q10 + 2] * w10 + up[q11 + 2] * w11;
+      }
+    }
+    c[0] = r * k; c[1] = g * k; c[2] = b * k;
+  };
   for (let cy = 0; cy < t.th; cy++){
-    const Y = t.y0 + cy, uy = (Y - e.ry0) * f;
+    const Y = t.y0 + cy;
     for (let cx = 0; cx < t.tw; cx++){
       const X = t.x0 + cx, wv = E.classWeight(E.sampleMap(a, X, Y), s.bounds, enable) * s.kiAmt;
       if (wv <= 0.002) continue;
-      const ux = (X - e.rx0) * f;
-      let r = 0, g = 0, b = 0;
-      for (let j = 0; j < f; j++) for (let i = 0; i < f; i++){ const q = ((uy + j) * UW + ux + i) * 3; r += up[q]; g += up[q + 1]; b += up[q + 2]; }
+      sample(X, Y);
       const p = (Y * W + X) * 4;
-      o[p] += wv * (r * k - o[p]); o[p + 1] += wv * (g * k - o[p + 1]); o[p + 2] += wv * (b * k - o[p + 2]);
+      o[p] += wv * (c[0] - o[p]); o[p + 1] += wv * (c[1] - o[p + 1]); o[p + 2] += wv * (c[2] - o[p + 2]);
     }
   }
   state.outCtx.putImageData(state.outData, 0, 0, t.x0, t.y0, t.tw, t.th);
@@ -1454,7 +1476,8 @@ async function runSharpen(gen){
   finish(p, key);
   const secs = (performance.now() - t0) / 1000;
   const n = enable.reduce((x, e, i) => x + (e && i > 0 && stats[i] > 0.005 ? 1 : 0), 0);
-  showNote('Fertig: ' + (n === 1 ? '1 unscharfe Ebene' : n + ' unscharfe Ebenen') + ' geschärft' + kiText + ' (' + secs.toFixed(1) + ' s). Ziehe den Regler im Bild für Vorher/Nachher.', 'ok', 7000);
+  const zoomTip = state.v.scale < 0.6 ? ' Tipp: Zoome mit dem Mausrad oder per Doppelklick auf eine Stelle – im ganzen Bild sieht man den Unterschied kaum.' : '';
+  showNote('Fertig: ' + (n === 1 ? '1 unscharfe Ebene' : n + ' unscharfe Ebenen') + ' geschärft' + kiText + ' (' + secs.toFixed(1) + ' s). Ziehe den Regler im Bild für Vorher/Nachher.' + zoomTip, 'ok', zoomTip ? 10000 : 7000);
   return true;
 }
 function finish(p, key){

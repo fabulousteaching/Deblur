@@ -39,7 +39,7 @@ In der Ansicht **Ebenen** siehst du die Bereiche farbig. Mit den Häkchen wähls
 - **Stärke:** Wie kräftig nachgeschärft wird.
 - **Rauschschutz:** Höher bedeutet weniger verstärktes Bildrauschen und weniger Säume an Kanten, dafür wird das Ergebnis etwas weicher.
 - **KI-Details (experimentell):** Zusätzlich ergänzt ein neuronales Netz Feinheiten, die in der Unschärfe verloren gingen, zum Beispiel Augen, Brauen und Lippen. Das wirkt deutlich schärfer, aber diese Details sind **erfunden**. Gesichter können sich dadurch leicht verändern.
-- **KI-Anteil:** Wie stark das KI-Ergebnis mit dem normal geschärften Bild gemischt wird. Etwa 60 % sieht meist natürlich aus.
+- **KI-Anteil:** Wie stark das KI-Ergebnis mit dem normal geschärften Bild gemischt wird. Standard ist 70 %; wenn ein Gesicht zu glatt oder «gemalt» wirkt, weniger nehmen.
 
 ## Wie es funktioniert
 
@@ -56,7 +56,7 @@ In der Ansicht **Ebenen** siehst du die Bereiche farbig. Mit den Häkchen wähls
 Ausgangslage: Normales Schärfen kann nur zurückholen, was noch im Bild steckt. Bei deutlicher Unschärfe sind die feinsten Einzelheiten (Wimpern, einzelne Haare, Hautporen) aber nicht mehr vorhanden.
 
 So arbeitet die KI:
-1. Sie verkleinert die unscharfen Stellen.
+1. Sie verkleinert die unscharfen Stellen, und zwar so stark, dass die kleine Kopie nur noch leicht unscharf ist (je nach gemessener Unschärfe um das 2- bis 8-Fache; bei grossen Kamerafotos stärker als bei kleinen Bildern).
 2. Sie vergrössert sie wieder auf das Vierfache. Dabei ergänzt sie Feinheiten, wie sie es an sehr vielen Fotos gelernt hat.
 3. Das Ergebnis wird auf die Originalgrösse zurückgerechnet und nur in den angehakten unscharfen Ebenen eingemischt, die genug Struktur haben. Glatte Flächen wie Wände lässt sie aus.
 
