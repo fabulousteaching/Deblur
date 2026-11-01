@@ -93,7 +93,7 @@ Verwendete Teile:
 - **YuNet** von Shiqi Yu (https://github.com/opencv/opencv_zoo), MIT-Lizenz, siehe `LIZENZ-YuNet.txt`.
 - **ONNX Runtime Web 1.20.1** von Microsoft, MIT-Lizenz, siehe `LIZENZ-onnxruntime.txt`.
 
-Wie der Ordner `gesichts-ki/` entsteht, zeigt `werkzeuge/gesichts-ki-vorbereiten.py`:
+Die Datenblöcke im Ordner `gesichts-ki/` tragen die Endung `.wasm`, weil Artefakte nur gängige Web-Dateitypen ausliefern. Es sind trotzdem reine Datenblöcke. Wie der Ordner entsteht, zeigt `werkzeuge/gesichts-ki-vorbereiten.py`:
 
 ```bash
 python3 werkzeuge/gesichts-ki-vorbereiten.py gfpgan_1.4.onnx face_detection_yunet_2023mar.onnx onnxruntime-web/dist gesichts-ki/

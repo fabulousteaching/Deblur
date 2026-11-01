@@ -1276,6 +1276,7 @@ async function runKI(gen, a, s, enable){
 }
 
 /* ---------- Gesichter neu zeichnen (YuNet + GFPGAN über ONNX Runtime Web) ---------- */
+// Die Datenblöcke tragen die Endung .wasm, weil Artefakte nur gängige Web-Dateitypen ausliefern.
 const FACE = { dir: 'gesichts-ki/', det: null, gfp: null, ep: '', loading: null };
 const FFHQ5 = [[192.98138, 239.94708], [318.90277, 240.1936], [256.63416, 314.01935], [201.26117, 371.41043], [313.08905, 371.15118]];
 let halfLutCache = null;
@@ -1312,17 +1313,17 @@ function faceLoad(progress){
       const ort = window.ort;
       ort.env.wasm.numThreads = 1;
       ort.env.wasm.wasmPaths = base;
-      const w1 = await fetchBytes(base + 'ort-wasm-1.bin'), w2 = await fetchBytes(base + 'ort-wasm-2.bin');
+      const w1 = await fetchBytes(base + 'ort-wasm-1.wasm'), w2 = await fetchBytes(base + 'ort-wasm-2.wasm');
       const wasm = new Uint8Array(w1.length + w2.length); wasm.set(w1); wasm.set(w2, w1.length);
       ort.env.wasm.wasmBinary = wasm.buffer;
       progress(0.08);
-      FACE.det = await ort.InferenceSession.create(await fetchBytes(base + 'yunet.onnx'), { executionProviders: ['wasm'] });
+      FACE.det = await ort.InferenceSession.create(await fetchBytes(base + 'yunet.onnx.wasm'), { executionProviders: ['wasm'] });
       const info = JSON.parse(new TextDecoder().decode(await fetchBytes(base + 'gfpgan.json')));
-      const graph = await fetchBytes(base + 'gfpgan.onnx');
+      const graph = await fetchBytes(base + 'gfpgan.onnx.wasm');
       const lut = halfLut(), data = new Float32Array(info.zahlen);
       let off = 0;
       for (let i = 1; i <= info.teile; i++){
-        const b = await fetchBytes(base + 'gfpgan-' + String(i).padStart(2, '0') + '.bin');
+        const b = await fetchBytes(base + 'gfpgan-' + String(i).padStart(2, '0') + '.wasm');
         const u = new Uint16Array(b.buffer, b.byteOffset, b.length >> 1);
         for (let k = 0; k < u.length; k++) data[off + k] = lut[u[k]];
         off += u.length;
