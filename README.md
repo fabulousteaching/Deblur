@@ -2,7 +2,7 @@
 
 Ein Programm, in das du Fotos einfügst. Es erkennt die unscharfen Ebenen (Bereiche) im Bild und schärft sie nach. Scharfe Bereiche bleiben unverändert.
 
-Alles steckt in der einen Datei `index.html`. Sie läuft im Browser, auch ohne Internet. Deine Fotos werden nirgendwohin hochgeladen, alles wird auf deinem Gerät berechnet.
+Das Programm ist die Datei `index.html`. Sie läuft im Browser, auch ohne Internet. Nur die wahlweise Gesichts-KI lädt zusätzliche Dateien aus dem Ordner `gesichts-ki/`. Deine Fotos werden nirgendwohin hochgeladen, alles wird auf deinem Gerät berechnet.
 
 ## Online nutzen
 
@@ -40,6 +40,8 @@ In der Ansicht **Ebenen** siehst du die Bereiche farbig. Mit den Häkchen wähls
 - **Rauschschutz:** Höher bedeutet weniger verstärktes Bildrauschen und weniger Säume an Kanten, dafür wird das Ergebnis etwas weicher.
 - **KI-Details (experimentell):** Zusätzlich ergänzt ein neuronales Netz Feinheiten, die in der Unschärfe verloren gingen, zum Beispiel Augen, Brauen und Lippen. Das wirkt deutlich schärfer, aber diese Details sind **erfunden**. Gesichter können sich dadurch leicht verändern.
 - **KI-Anteil:** Wie stark das KI-Ergebnis mit dem normal geschärften Bild gemischt wird. Standard ist 70 %; wenn ein Gesicht zu glatt oder «gemalt» wirkt, weniger nehmen.
+- **Gesichter neu zeichnen (experimentell):** Eine Gesichts-KI zeichnet unscharfe Gesichter komplett scharf neu, mit Augen, Wimpern, Brauen und Haut. Damit sieht ein Gesicht im unscharfen Hintergrund so scharf aus wie eines im Vordergrund. Die Details sind **erfunden**: Das Gesicht kann leicht anders aussehen als in Wirklichkeit.
+- **Gesichts-Anteil:** Wie stark das neu gezeichnete Gesicht eingesetzt wird. Standard ist 100 %.
 
 ## Wie es funktioniert
 
@@ -66,6 +68,35 @@ Das Modell ist Real-ESRGAN `realesr-general-x4v3` von Xintao Wang u. a. (https:/
 
 ```bash
 python3 werkzeuge/modell-einbauen.py realesr-general-x4v3.pth index.html
+```
+
+## Gesichter neu zeichnen
+
+So arbeitet die Gesichts-KI:
+1. Ein Gesichtsfinder (YuNet) sucht im Foto nach Gesichtern.
+2. Nur Gesichter, die in einer angehakten unscharfen Ebene liegen, werden bearbeitet. Scharfe Gesichter bleiben, wie sie sind.
+3. Jedes dieser Gesichter wird an Augen, Nase und Mund ausgerichtet. GFPGAN 1.4 zeichnet es in 512 × 512 Pixeln neu.
+4. Das neue Gesicht wird mit weichem Rand zurück ins Foto gesetzt.
+
+Beim ersten Gebrauch lädt der Browser etwa 190 MB nach (Ordner `gesichts-ki/`). Danach geht es schneller.
+
+Die Rechenzeit hängt vom Gerät ab:
+- **Mit Grafikkarte (WebGPU):** Gemessen habe ich das noch nicht, es sollte aber deutlich schneller gehen als ohne.
+- **Ohne Grafikkarte:** In meinem Test dauerte das Neuzeichnen rund 15 Sekunden pro Gesicht, das erste Mal kommt das Nachladen dazu.
+
+Auch die Gesichts-KI rechnet nur auf deinem Gerät.
+
+Wichtig: Das Nachladen funktioniert nur, wenn die Seite über eine Webadresse geöffnet wird, also über GitHub Pages oder als Artefakt. Öffnest du `index.html` per Doppelklick, blockiert der Browser das Nachladen. Das normale Schärfen und die KI-Details gehen dann trotzdem.
+
+Verwendete Teile:
+- **GFPGAN 1.4** von Tencent ARC (https://github.com/TencentARC/GFPGAN), als ONNX-Fassung aus https://github.com/facefusion/facefusion-assets. Die Lizenz ist Apache-2.0, enthält aber Bestandteile, die nur für nicht-kommerzielle Nutzung frei sind (StyleGAN2/NVIDIA, DFDNet), siehe `LIZENZ-GFPGAN.txt`. Für private Fotos ist das kein Problem; das Programm mit der Gesichts-KI darf aber nicht verkauft werden.
+- **YuNet** von Shiqi Yu (https://github.com/opencv/opencv_zoo), MIT-Lizenz, siehe `LIZENZ-YuNet.txt`.
+- **ONNX Runtime Web 1.20.1** von Microsoft, MIT-Lizenz, siehe `LIZENZ-onnxruntime.txt`.
+
+Wie der Ordner `gesichts-ki/` entsteht, zeigt `werkzeuge/gesichts-ki-vorbereiten.py`:
+
+```bash
+python3 werkzeuge/gesichts-ki-vorbereiten.py gfpgan_1.4.onnx face_detection_yunet_2023mar.onnx onnxruntime-web/dist gesichts-ki/
 ```
 
 ## Grenzen

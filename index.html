@@ -193,6 +193,12 @@ details.help a{color:#9cc8ff}
         <label for="kiAmt" class="kiamt">KI-Anteil <output id="kiOut"></output></label>
         <input type="range" id="kiAmt" min="10" max="100" value="70" disabled>
       </div>
+      <div class="ctl ki">
+        <label class="chk" for="face"><input type="checkbox" id="face"><span>Gesichter neu zeichnen <span class="tag">experimentell</span></span></label>
+        <div class="hint">Findet unscharfe Gesichter und zeichnet sie mit einer Gesichts-KI (GFPGAN) scharf neu – mit Augen, Wimpern, Brauen und Haut. Beim ersten Mal werden ca. 190 MB geladen. Die Details sind erfunden: Das Gesicht kann leicht anders aussehen als in Wirklichkeit.</div>
+        <label for="faceAmt" class="kiamt">Gesichts-Anteil <output id="faceOut"></output></label>
+        <input type="range" id="faceAmt" min="10" max="100" value="100" disabled>
+      </div>
     </section>
 
     <section class="actions">
@@ -209,6 +215,7 @@ details.help a{color:#9cc8ff}
         <p><b>1. Erkennen:</b> An jeder Kante im Foto wird gemessen, wie breit der Übergang ist. Daraus entsteht eine Karte, wie unscharf jede Stelle ist. Die Stellen werden in Ebenen eingeteilt – von «scharf» bis «sehr unscharf». In der Ansicht <b>Ebenen</b> siehst du sie farbig.</p>
         <p><b>2. Schärfen:</b> Jede unscharfe Ebene wird mit einer Wiener-Entfaltung passend zu ihrer gemessenen Unschärfe zurückgerechnet. Scharfe Bereiche bleiben unverändert, die Übergänge werden weich gemischt.</p>
         <p><b>3. KI-Details (wahlweise):</b> Ein neuronales Netz verkleinert die unscharfen Stellen und vergrössert sie wieder, wobei es aus Erfahrung mit vielen Fotos passende Feinheiten ergänzt. Diese Details sind erfunden. Mit «KI-Anteil» mischst du sie mit dem normal geschärften Bild. Das Netz läuft auf der Grafikkarte deines Geräts. Modell: <a href="https://github.com/xinntao/Real-ESRGAN" target="_blank" rel="noopener">Real-ESRGAN</a> (realesr-general-x4v3) von Xintao Wang u. a., BSD-3-Lizenz.</p>
+        <p><b>4. Gesichter neu zeichnen (wahlweise):</b> Ein Gesichtsfinder (<a href="https://github.com/opencv/opencv_zoo" target="_blank" rel="noopener">YuNet</a>, MIT-Lizenz) sucht Gesichter. Liegt ein Gesicht in einer markierten unscharfen Ebene, wird es ausgerichtet und von <a href="https://github.com/TencentARC/GFPGAN" target="_blank" rel="noopener">GFPGAN 1.4</a> (Tencent ARC) neu gezeichnet und weich ins Foto eingesetzt. GFPGAN steht unter Apache-2.0, enthält aber Teile, die nur für nicht-kommerzielle Nutzung frei sind – für private Fotos kein Problem. Gerechnet wird mit <a href="https://onnxruntime.ai" target="_blank" rel="noopener">ONNX Runtime Web</a> auf deinem Gerät.</p>
         <p><b>Grenzen:</b> Leichte bis mittlere Unschärfe (Fokus knapp verfehlt, weiche Linse) lässt sich gut verbessern. Sehr starke Unschärfe oder Verwacklung kann kein Programm vollständig zurückholen. Wenn der Hintergrund absichtlich unscharf sein soll, nimm die Häkchen bei diesen Ebenen weg.</p>
         <p><b>Datenschutz:</b> Alles wird auf deinem Gerät berechnet. Die Fotos werden nirgendwohin hochgeladen. Metadaten (EXIF) werden beim Speichern nicht übernommen.</p>
       </details>
@@ -903,7 +910,7 @@ const els = {
   file: $('#file'), viewer: $('#viewer'), cv: $('#view'), empty: $('#empty'), strip: $('#strip'),
   layers: $('#layers'), summary: $('#summary'), info: $('#info'), tools: $('#tools'), zoomBar: $('#zoomBar'), zVal: $('#zVal'),
   sens: $('#sens'), sensOut: $('#sensOut'), str: $('#str'), strOut: $('#strOut'), nr: $('#nr'), nrOut: $('#nrOut'),
-  ki: $('#ki'), kiAmt: $('#kiAmt'), kiOut: $('#kiOut'),
+  ki: $('#ki'), kiAmt: $('#kiAmt'), kiOut: $('#kiOut'), face: $('#face'), faceAmt: $('#faceAmt'), faceOut: $('#faceOut'),
   run: $('#runBtn'), dl: $('#dlBtn'), all: $('#allBtn'), busy: $('#busy'), busyText: $('#busyText'), busyBar: $('#busyBar'),
   cancel: $('#cancelBtn'), hud: $('#hud'), hudDot: $('#hudDot'), hudText: $('#hudText'), note: $('#note'),
 };
@@ -937,9 +944,10 @@ function settings(){
     maskMul: Math.pow(2, (nr - 40) / 40),  // … Schwelle der Detailmaske …
     gmax: (2 + 4 * t) / Math.pow(2, (nr - 40) / 40),   // … und höchste Verstärkung feiner Details
     ki: els.ki.checked, kiAmt: +els.kiAmt.value / 100,    // KI-Details
+    face: els.face.checked, faceAmt: +els.faceAmt.value / 100,   // Gesichter neu zeichnen
   };
 }
-function settingsKey(){ const s = settings(); return [s.sens, s.str, s.nr, state.enable.join(''), s.ki ? s.kiAmt : 0].join('|'); }
+function settingsKey(){ const s = settings(); return [s.sens, s.str, s.nr, state.enable.join(''), s.ki ? s.kiAmt : 0, s.face ? s.faceAmt : 0].join('|'); }
 function updateOutputs(){
   const s = settings();
   els.sensOut.textContent = 'unscharf ab ' + fmt(s.bounds[0]) + ' px';
@@ -947,6 +955,8 @@ function updateOutputs(){
   els.nrOut.textContent = s.nr + ' %';
   els.kiOut.textContent = Math.round(s.kiAmt * 100) + ' %';
   els.kiAmt.disabled = !s.ki;
+  els.faceOut.textContent = Math.round(s.faceAmt * 100) + ' %';
+  els.faceAmt.disabled = !s.face;
 }
 
 /* ---------- Rechnen (Worker oder Hauptthread) ---------- */
@@ -1265,6 +1275,192 @@ async function runKI(gen, a, s, enable){
   return { tiles: tiles.length, gpu: !!g };
 }
 
+/* ---------- Gesichter neu zeichnen (YuNet + GFPGAN über ONNX Runtime Web) ---------- */
+const FACE = { dir: 'gesichts-ki/', det: null, gfp: null, ep: '', loading: null };
+const FFHQ5 = [[192.98138, 239.94708], [318.90277, 240.1936], [256.63416, 314.01935], [201.26117, 371.41043], [313.08905, 371.15118]];
+let halfLutCache = null;
+function halfLut(){
+  if (halfLutCache) return halfLutCache;
+  const lut = new Float32Array(65536);
+  for (let h = 0; h < 65536; h++){
+    const sg = h & 0x8000 ? -1 : 1, e = (h >> 10) & 31, f = h & 1023;
+    lut[h] = e === 0 ? sg * f * Math.pow(2, -24) : (e === 31 ? (f ? NaN : sg * Infinity) : sg * Math.pow(2, e - 15) * (1 + f / 1024));
+  }
+  return (halfLutCache = lut);
+}
+function loadScript(src){
+  return new Promise((res, rej) => {
+    const el = document.createElement('script'); el.src = src;
+    el.onload = res; el.onerror = () => rej(new Error('Datei nicht gefunden: ' + src.split('/').pop()));
+    document.head.appendChild(el);
+  });
+}
+async function fetchBytes(url){
+  let r;
+  try { r = await fetch(url); } catch (e) { throw new Error('Datei konnte nicht geladen werden: ' + url.split('/').pop()); }
+  if (!r.ok) throw new Error('Datei fehlt (' + r.status + '): ' + url.split('/').pop());
+  return new Uint8Array(await r.arrayBuffer());
+}
+// Lädt Laufzeit und Modelle (einmal pro Sitzung). progress(0…1)
+function faceLoad(progress){
+  if (FACE.gfp) return Promise.resolve();
+  if (!FACE.loading){
+    FACE.loading = (async () => {
+      if (location.protocol === 'file:') throw new Error('Beim direkten Öffnen der Datei blockiert der Browser das Nachladen der Gesichts-KI. Öffne das Programm über GitHub Pages oder als Artefakt.');
+      const base = new URL(FACE.dir, location.href).href;
+      if (!window.ort) await loadScript(base + 'ort.webgpu.min.js');
+      const ort = window.ort;
+      ort.env.wasm.numThreads = 1;
+      ort.env.wasm.wasmPaths = base;
+      const w1 = await fetchBytes(base + 'ort-wasm-1.bin'), w2 = await fetchBytes(base + 'ort-wasm-2.bin');
+      const wasm = new Uint8Array(w1.length + w2.length); wasm.set(w1); wasm.set(w2, w1.length);
+      ort.env.wasm.wasmBinary = wasm.buffer;
+      progress(0.08);
+      FACE.det = await ort.InferenceSession.create(await fetchBytes(base + 'yunet.onnx'), { executionProviders: ['wasm'] });
+      const info = JSON.parse(new TextDecoder().decode(await fetchBytes(base + 'gfpgan.json')));
+      const graph = await fetchBytes(base + 'gfpgan.onnx');
+      const lut = halfLut(), data = new Float32Array(info.zahlen);
+      let off = 0;
+      for (let i = 1; i <= info.teile; i++){
+        const b = await fetchBytes(base + 'gfpgan-' + String(i).padStart(2, '0') + '.bin');
+        const u = new Uint16Array(b.buffer, b.byteOffset, b.length >> 1);
+        for (let k = 0; k < u.length; k++) data[off + k] = lut[u[k]];
+        off += u.length;
+        progress(0.08 + 0.82 * i / info.teile);
+      }
+      if (off !== info.zahlen) throw new Error('Gesichts-KI unvollständig geladen');
+      const ext = [{ path: 'gfpgan.data', data: new Uint8Array(data.buffer) }];
+      let gpu = false;
+      try { gpu = !!(navigator.gpu && await navigator.gpu.requestAdapter()); } catch (e) {}
+      if (gpu){
+        try { FACE.gfp = await ort.InferenceSession.create(graph, { executionProviders: ['webgpu'], externalData: ext }); FACE.ep = 'webgpu'; }
+        catch (e) { console.warn('Gesichts-KI: WebGPU nicht nutzbar –', e && e.message); }
+      }
+      if (!FACE.gfp){ FACE.gfp = await ort.InferenceSession.create(graph, { executionProviders: ['wasm'], externalData: ext }); FACE.ep = 'wasm'; }
+      progress(1);
+    })();
+    FACE.loading.catch(() => { FACE.loading = null; FACE.det = FACE.gfp = null; });
+  }
+  return FACE.loading;
+}
+// Gesichter finden (YuNet, Eingang 640 × 640, BGR 0…255). Ergebnis in Bildkoordinaten.
+async function faceDetect(){
+  const src = state.src, S = 640, sc = S / Math.max(src.w, src.h);
+  const cv = document.createElement('canvas'); cv.width = cv.height = S;
+  const c = cv.getContext('2d', { willReadFrequently: true });
+  c.fillStyle = '#000'; c.fillRect(0, 0, S, S); c.imageSmoothingQuality = 'high';
+  c.drawImage(src.canvas, 0, 0, Math.round(src.w * sc), Math.round(src.h * sc));
+  const d = c.getImageData(0, 0, S, S).data, n = S * S, x = new Float32Array(3 * n);
+  for (let i = 0; i < n; i++){ x[i] = d[i * 4 + 2]; x[n + i] = d[i * 4 + 1]; x[2 * n + i] = d[i * 4]; }
+  const out = await FACE.det.run({ input: new window.ort.Tensor('float32', x, [1, 3, S, S]) });
+  const found = [];
+  for (const st of [8, 16, 32]){
+    const cls = out['cls_' + st].data, obj = out['obj_' + st].data, box = out['bbox_' + st].data, kps = out['kps_' + st].data, cols = S / st;
+    for (let i = 0; i < cls.length; i++){
+      const score = Math.sqrt(Math.min(1, Math.max(0, cls[i])) * Math.min(1, Math.max(0, obj[i])));
+      if (score < 0.6) continue;
+      const r = Math.floor(i / cols), cc = i % cols;
+      const cx = (cc + box[i * 4]) * st, cy = (r + box[i * 4 + 1]) * st, w = Math.exp(box[i * 4 + 2]) * st, h = Math.exp(box[i * 4 + 3]) * st;
+      const lm = [];
+      for (let k = 0; k < 5; k++) lm.push([(kps[i * 10 + 2 * k] + cc) * st / sc, (kps[i * 10 + 2 * k + 1] + r) * st / sc]);
+      found.push({ score, x: (cx - w / 2) / sc, y: (cy - h / 2) / sc, w: w / sc, h: h / sc, lm });
+    }
+  }
+  found.sort((p, q) => q.score - p.score);
+  const keep = [];
+  for (const f of found){
+    const iou = k => { const ix = Math.max(0, Math.min(f.x + f.w, k.x + k.w) - Math.max(f.x, k.x)), iy = Math.max(0, Math.min(f.y + f.h, k.y + k.h) - Math.max(f.y, k.y)), i = ix * iy; return i / (f.w * f.h + k.w * k.h - i); };
+    if (keep.every(k => iou(k) < 0.3)) keep.push(f);
+  }
+  return keep;
+}
+// Ähnlichkeitsabbildung (Drehen, Skalieren, Verschieben), die die Punkte src möglichst genau auf dst legt
+function similarity(src, dst){
+  let msx = 0, msy = 0, mdx = 0, mdy = 0; const n = src.length;
+  for (let i = 0; i < n; i++){ msx += src[i][0]; msy += src[i][1]; mdx += dst[i][0]; mdy += dst[i][1]; }
+  msx /= n; msy /= n; mdx /= n; mdy /= n;
+  let a = 0, b = 0, q = 0;
+  for (let i = 0; i < n; i++){
+    const sx = src[i][0] - msx, sy = src[i][1] - msy, dx = dst[i][0] - mdx, dy = dst[i][1] - mdy;
+    a += sx * dx + sy * dy; b += sx * dy - sy * dx; q += sx * sx + sy * sy;
+  }
+  const c = a / q, s = b / q;   // Skalierung·cos, Skalierung·sin
+  return [c, -s, mdx - (c * msx - s * msy), s, c, mdy - (s * msx + c * msy)];
+}
+function invert(M){
+  const [a, b, c, d, e, f] = M, det = a * e - b * d;
+  return [e / det, -b / det, (b * f - c * e) / det, -d / det, a / det, (c * d - a * f) / det];
+}
+function sampleRGB(px, w, h, x, y, out){        // bilinear, Rand verlängert
+  x = x < 0 ? 0 : (x > w - 1 ? w - 1 : x); y = y < 0 ? 0 : (y > h - 1 ? h - 1 : y);
+  const x0 = x | 0, y0 = y | 0, x1 = x0 + 1 < w ? x0 + 1 : x0, y1 = y0 + 1 < h ? y0 + 1 : y0, fx = x - x0, fy = y - y0;
+  const p00 = (y0 * w + x0) * 4, p01 = (y0 * w + x1) * 4, p10 = (y1 * w + x0) * 4, p11 = (y1 * w + x1) * 4;
+  for (let c = 0; c < 3; c++) out[c] = (px[p00 + c] * (1 - fx) + px[p01 + c] * fx) * (1 - fy) + (px[p10 + c] * (1 - fx) + px[p11 + c] * fx) * fy;
+}
+async function runFaces(gen, a, s, enable){
+  const label = 'Gesichts-KI wird geladen (einmalig ca. 190 MB) …';
+  try {
+    if (!FACE.gfp){ setBusy(true, label, 0); await faceLoad(v => { if (gen === state.gen) setBusy(true, label, v); }); }
+  } catch (e){ return { error: e.message || String(e) }; }
+  if (gen !== state.gen) return null;
+  setBusy(true, 'Gesichter werden gesucht …', 0);
+  await sleep(30);
+  let faces;
+  try { faces = await faceDetect(); } catch (e){ return { error: 'Gesichtssuche: ' + (e.message || e) }; }
+  if (gen !== state.gen) return null;
+  // Nur Gesichter in markierten unscharfen Ebenen
+  const pick = faces.filter(f => {
+    if (f.w < 16) return false;
+    let wsum = 0, n = 0;
+    for (let j = 1; j < 4; j++) for (let i = 1; i < 4; i++){ wsum += E.classWeight(E.sampleMap(a, f.x + f.w * i / 4, f.y + f.h * j / 4), s.bounds, enable); n++; }
+    return wsum / n > 0.3;
+  });
+  FACE.last = { found: faces.map(f => [f.x, f.y, f.w, f.h].map(Math.round)), picked: pick.map(f => [f.x, f.y, f.w, f.h].map(Math.round)) };
+  const W = state.src.w, H = state.src.h, src = state.src.data.data, o = state.outData.data, N = 512, rgb = [0, 0, 0];
+  let count = 0;
+  for (const f of pick){
+    setBusy(true, 'Gesicht ' + (count + 1) + ' von ' + pick.length + ' wird neu gezeichnet' + (FACE.ep === 'wasm' ? ' (ohne Grafikkarte, bitte warten)' : '') + ' …', count / pick.length);
+    await sleep(50);
+    if (gen !== state.gen) return null;
+    const M = similarity(f.lm, FFHQ5), Mi = invert(M);     // M: Bild → 512er-Gesicht
+    const x = new Float32Array(3 * N * N);
+    for (let v = 0; v < N; v++) for (let u = 0; u < N; u++){
+      sampleRGB(src, W, H, Mi[0] * u + Mi[1] * v + Mi[2], Mi[3] * u + Mi[4] * v + Mi[5], rgb);
+      const q = v * N + u;
+      x[q] = rgb[0] / 127.5 - 1; x[N * N + q] = rgb[1] / 127.5 - 1; x[2 * N * N + q] = rgb[2] / 127.5 - 1;
+    }
+    let y;
+    try { y = (await FACE.gfp.run({ input: new window.ort.Tensor('float32', x, [1, 3, N, N]) })).output.data; }
+    catch (e){ return { error: 'Gesicht neu zeichnen: ' + (e.message || e) }; }
+    if (gen !== state.gen) return null;
+    const face = new Uint8ClampedArray(N * N * 4);
+    for (let q = 0; q < N * N; q++){
+      for (let c = 0; c < 3; c++){ const v = y[c * N * N + q]; face[q * 4 + c] = ((v < -1 ? -1 : (v > 1 ? 1 : v)) + 1) * 127.5; }
+      face[q * 4 + 3] = 255;
+    }
+    // Zurück ins Foto: Bereich des 512er-Quadrats, weicher Rand
+    const cx = [[0, 0], [N, 0], [0, N], [N, N]].map(([u, v]) => [Mi[0] * u + Mi[1] * v + Mi[2], Mi[3] * u + Mi[4] * v + Mi[5]]);
+    const bx0 = Math.max(0, Math.floor(Math.min(...cx.map(p => p[0])))), bx1 = Math.min(W - 1, Math.ceil(Math.max(...cx.map(p => p[0]))));
+    const by0 = Math.max(0, Math.floor(Math.min(...cx.map(p => p[1])))), by1 = Math.min(H - 1, Math.ceil(Math.max(...cx.map(p => p[1]))));
+    const ramp = t => { const d = Math.min(t, N - 1 - t); if (d <= 8) return 0; if (d >= 72) return 1; const z = (d - 8) / 64; return z * z * (3 - 2 * z); };
+    for (let Y = by0; Y <= by1; Y++){
+      for (let X = bx0; X <= bx1; X++){
+        const u = M[0] * X + M[1] * Y + M[2], v = M[3] * X + M[4] * Y + M[5];
+        if (u < 0 || v < 0 || u > N - 1 || v > N - 1) continue;
+        const m = ramp(u) * ramp(v) * s.faceAmt;
+        if (m <= 0.002) continue;
+        sampleRGB(face, N, N, u, v, rgb);
+        const p = (Y * W + X) * 4;
+        o[p] += m * (rgb[0] - o[p]); o[p + 1] += m * (rgb[1] - o[p + 1]); o[p + 2] += m * (rgb[2] - o[p + 2]);
+      }
+    }
+    state.outCtx.putImageData(state.outData, 0, 0, bx0, by0, bx1 - bx0 + 1, by1 - by0 + 1);
+    scheduleDraw();
+    count++;
+  }
+  return { count, found: faces.length };
+}
+
 /* ---------- Fotos laden ---------- */
 async function decode(file){
   if (window.createImageBitmap){
@@ -1472,6 +1668,12 @@ async function runSharpen(gen){
     if (gen !== state.gen || !r) return false;
     if (r.error){ finish(p, key); showNote('Geschärft, aber die KI-Details sind fehlgeschlagen: ' + r.error, 'err', 8000); return true; }
     kiText = r.tiles ? ' mit KI-Details' : ' (keine Stellen mit genug Struktur für KI-Details)';
+  }
+  if (s.face){
+    const r = await runFaces(gen, a, s, enable);
+    if (gen !== state.gen || !r) return false;
+    if (r.error){ finish(p, key); showNote('Geschärft, aber die Gesichts-KI hat nicht funktioniert: ' + r.error, 'err', 10000); return true; }
+    kiText += r.count ? ', ' + (r.count === 1 ? '1 Gesicht' : r.count + ' Gesichter') + ' neu gezeichnet' : ' (kein unscharfes Gesicht gefunden)';
   }
   finish(p, key);
   const secs = (performance.now() - t0) / 1000;
@@ -1758,7 +1960,8 @@ els.layers.addEventListener('change', e => {
   renderLayers(); updateButtons();
 });
 els.ki.addEventListener('change', () => { updateOutputs(); updateButtons(); });
-for (const el of [els.sens, els.str, els.nr, els.kiAmt]){
+els.face.addEventListener('change', () => { updateOutputs(); updateButtons(); });
+for (const el of [els.sens, els.str, els.nr, els.kiAmt, els.faceAmt]){
   el.addEventListener('input', () => {
     updateOutputs();
     if (el === els.sens){ buildOverlay(); renderLayers(); scheduleDraw(); }
