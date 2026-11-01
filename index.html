@@ -558,7 +558,8 @@ function engineFactory(){
   function mirrorIdx(x, n, N){ if (x < n) return x; const half = n + ((N - n) >> 1); return x < half ? 2 * n - 1 - x : N - 1 - x; }
 
   // Entfaltet g (w × h) für mehrere Sigmas auf einmal. Gibt pro Sigma ein Float32Array (w × h) zurück.
-  function wiener(g, w, h, sigmas, lambda){
+  function wiener(g, w, h, sigmas, lambda, gmax){
+    if (!gmax) gmax = 1e9;
     const N = pow2(w), M = pow2(h), n = N * M;
     const Xr = new Float64Array(n), Xi = new Float64Array(n);
     let mean = 0;
@@ -581,9 +582,10 @@ function engineFactory(){
         const o = ky * N;
         for (let kx = 0; kx < N; kx++){
           const i = o + kx, f2 = fx2[kx] + fy2[ky], R = lambda * (rx[kx] + ry[ky]);
-          const H1 = Math.exp(c1 * f2), G1 = H1 / (H1 * H1 + R);
-          let G2 = 0;
-          if (s2 > 0){ const H2 = Math.exp(c2 * f2); G2 = H2 / (H2 * H2 + R); }
+          const H1 = Math.exp(c1 * f2);
+          let G1 = H1 / (H1 * H1 + R), G2 = 0;
+          if (G1 > gmax) G1 = gmax;
+          if (s2 > 0){ const H2 = Math.exp(c2 * f2); G2 = H2 / (H2 * H2 + R); if (G2 > gmax) G2 = gmax; }
           const xr = Xr[i], xi = Xi[i];
           Yr[i] = xr * G1 - xi * G2; Yi[i] = xi * G1 + xr * G2;
         }
@@ -652,9 +654,9 @@ function engineFactory(){
     const fg = new Float32Array(pw * ph);
     for (let i = 0; i < fg.length; i++) fg[i] = Math.pow(f[i] > 0 ? f[i] : 0, 1 / 2.2);
 
-    // Detailmaske: nur wo Konturen deutlich über dem Rauschen liegen, wird geschärft.
-    // Glatte, unscharfe Flächen (z. B. Hintergrund) bleiben ruhig statt körnig zu werden.
-    const M = 8, mw = tw + 2 * M, mh = th + 2 * M, gm = new Float32Array(mw * mh), tmp = new Float32Array(mw * mh);
+    // Detailmaske: bei verrauschten Fotos wird nur dort geschärft, wo Konturen deutlich über
+    // dem Rauschen liegen. Glatte, unscharfe Flächen bleiben so ruhig statt körnig zu werden.
+    const M = 11, mw = tw + 2 * M, mh = th + 2 * M, gm = new Float32Array(mw * mh), tmp = new Float32Array(mw * mh);
     for (let y = 0; y < mh; y++){
       for (let x = 0; x < mw; x++){
         const i = (pad - M + y) * pw + (pad - M + x);
@@ -663,8 +665,8 @@ function engineFactory(){
         gm[y * mw + x] = Math.sqrt(gx * gx + gy * gy);
       }
     }
-    blur(gm, gm, tmp, mw, mh, kernel(2));
-    const ta = Math.max(0.0025, 1.5 * noise) * maskMul, tb = 3.5 * ta;
+    blur(gm, gm, tmp, mw, mh, kernel(3));
+    const ta = Math.max(0.0005, 1.5 * noise) * maskMul, tb = 5 * ta;
 
     const res = new Array(NL).fill(null);
     for (const s of [1, 2, 4, 8]){
@@ -690,7 +692,7 @@ function engineFactory(){
           }
         }
       }
-      const outs = wiener(g, lw, lh, lv.map(li => LEVELS[li] / s), lambda);
+      const outs = wiener(g, lw, lh, lv.map(li => LEVELS[li] / s), lambda, J.gmax);
       lv.forEach((li, k) => {
         const u = outs[k], out = new Float32Array(nC);
         // Überschwinger begrenzen: nicht heller/dunkler als die Umgebung (plus kleine Reserve)
@@ -868,7 +870,8 @@ function settings(){
     halo: 0.01 + 0.12 * t * t,             // erlaubtes Überschwingen an Kanten
     amount: Math.min(1, 0.4 + t),          // Mischanteil
     nrMul: Math.pow(2, (nr - 40) / 20),    // Rauschschutz: Regularisierung …
-    maskMul: Math.pow(2, (nr - 40) / 40),  // … und Schwelle der Detailmaske
+    maskMul: Math.pow(2, (nr - 40) / 40),  // … Schwelle der Detailmaske …
+    gmax: (2 + 4 * t) / Math.pow(2, (nr - 40) / 40),   // … und höchste Verstärkung feiner Details
   };
 }
 function settingsKey(){ const s = settings(); return [s.sens, s.str, s.nr, state.enable.join('')].join('|'); }
@@ -1069,7 +1072,8 @@ async function runSharpen(gen){
     return true;
   }
   const t0 = performance.now(), total = tiles.reduce((x, t) => x + t.cost, 0);
-  const lambda = (3e-4 + 150 * a.noise * a.noise) * s.nrMul;
+  // Auch «rauschfreie» JPEGs haben Kompressionsspuren: deshalb eine Untergrenze für das Rauschen
+  const nEff = Math.max(a.noise, 0.003), lambda = (6e-4 + 150 * nEff * nEff) * s.nrMul;
   let next = 0, inflight = 0, doneCost = 0, done = 0, failed = null;
   const limit = state.useLocal ? 1 : pool.size * 2;
   const label = 'Unscharfe Ebenen werden geschärft …';
@@ -1080,7 +1084,7 @@ async function runSharpen(gen){
         const t = tiles[next++]; inflight++;
         compute('tile', () => {
           const f = extractTile(t);
-          return { msg: { type: 'tile', job: { f, pw: t.pw, ph: t.ph, pad: t.pad, tw: t.tw, th: t.th, x0: t.x0, y0: t.y0, sub: t.sub, bounds: s.bounds, enable, lambda, psf: s.psf, halo: s.halo, amount: s.amount, noise: a.noise, maskMul: s.maskMul } }, transfer: [f.buffer] };
+          return { msg: { type: 'tile', job: { f, pw: t.pw, ph: t.ph, pad: t.pad, tw: t.tw, th: t.th, x0: t.x0, y0: t.y0, sub: t.sub, bounds: s.bounds, enable, lambda, psf: s.psf, halo: s.halo, amount: s.amount, gmax: s.gmax, noise: a.noise, maskMul: s.maskMul } }, transfer: [f.buffer] };
         }).then(Y => {
           inflight--;
           if (gen !== state.gen) return resolve();
